@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NBA Opportunity Scanner</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1020;--panel:#141c31;--panel2:#1b2741;--line:#2b3857;--text:#eef3ff;--muted:#9eabc6;--green:#35d39a;--yellow:#ffd166;--red:#ff7777;--blue:#80b7ff}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#0b1020,#101a2d);color:var(--text);font:15px system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+header{padding:22px 16px 14px;max-width:1100px;margin:auto}h1{font-size:26px;margin:0 0 6px}p{margin:6px 0;color:var(--muted);line-height:1.45}
+main{max-width:1100px;margin:auto;padding:0 14px 36px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:14px;margin:12px 0}
+.controls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+label{display:block;color:var(--muted);font-size:12px;margin:0 0 5px}
+select,input,button{width:100%;padding:11px;border-radius:10px;border:1px solid var(--line);background:#0e1628;color:var(--text);font:inherit}
+button{background:#245ba5;border:0;font-weight:700;cursor:pointer}.secondary{background:#26334e}
+.actions{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:10px}
+.pills{display:flex;flex-wrap:wrap;gap:7px;margin:12px 0}
+.pill{border:1px solid var(--line);padding:7px 10px;border-radius:999px;color:var(--muted);font-size:12px}
+.status{padding:10px;border-radius:10px;background:#0e1628;color:var(--muted);font-size:13px}
+.cards{display:grid;gap:10px}.market{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:13px}
+.top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.name{font-weight:750;line-height:1.3}
+.tag{font-size:11px;padding:4px 8px;border-radius:999px;background:#26334e;color:#c8d9f5;white-space:nowrap}
+.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin:12px 0}
+.metric{background:#0e1628;padding:8px;border-radius:9px;min-width:0}.metric b{display:block;font-size:16px}.metric small{color:var(--muted);font-size:10px}
+.score{font-size:12px;color:var(--yellow);margin:4px 0 8px}.why{font-size:12px;color:var(--muted);line-height:1.4}
+.links{display:flex;gap:12px;margin-top:10px;font-size:12px}a{color:var(--blue)}
+.empty{text-align:center;padding:28px 12px;color:var(--muted)}
+@media(min-width:700px){.controls{grid-template-columns:repeat(4,minmax(0,1fr))}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style>
+</head>
+<body>
+<header>
+<h1>🏀 NBA Opportunity Scanner</h1>
+<p>One board for the whole slate: player props, combos, threes, double-doubles, triple-doubles, and both YES and NO angles.</p>
+</header>
+<main>
+<section class="panel">
+<div class="controls">
+<div><label for="date">Game date</label><input id="date" type="date"></div>
+<div><label for="category">Market type</label><select id="category"><option value="all">All opportunities</option><option value="points">Points</option><option value="rebounds">Rebounds</option><option value="assists">Assists</option><option value="pra">PRA / combos</option><option value="threes">3-pointers</option><option value="dd">Double-doubles</option><option value="td">Triple-doubles</option></select></div>
+<div><label for="side">Side</label><select id="side"><option value="all">YES + NO</option><option value="yes">YES only</option><option value="no">NO only</option></select></div>
+<div><label for="sort">Rank by</label><select id="sort"><option value="score">Scanner score</option><option value="volume">Volume</option><option value="price">YES price</option></select></div>
+</div>
+<div class="actions">
+<button id="scan">Scan Kalshi markets</button>
+<button class="secondary" id="reset">Reset filters</button>
+</div>
+<div class="pills">
+<span class="pill">Actual open contracts only</span><span class="pill">No invented lines or prices</span><span class="pill">No forced picks</span>
+</div>
+<div class="status" id="status">Ready. Scan to load currently open Kalshi markets. This page needs an internet connection and the Kalshi endpoint must allow browser access.</div>
+</section>
+<section class="panel">
+<h3 style="margin:0 0 6px">How the ranking works</h3>
+<p>It first identifies real player-stat contracts, then sorts candidates using the market's available price, spread, and trading volume. It does <b>not</b> call a market a statistical edge just because a player has never hit a line. Historical game logs, confirmed minutes, injuries, matchup and schedule context still need independent verification before a bet.</p>
+<p style="font-size:12px">A strong-looking price is not automatically value. Compare the implied probability with a defensible player-performance estimate, and account for liquidity and fees.</p>
+</section>
+<section id="results" class="cards"><div class="empty">No markets loaded yet.</div></section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const endpoint='https://external-api.kalshi.com/trade-api/v2/markets?status=open&limit=1000';
+let markets=[];
+const patterns=[
+ ['td',/triple.?double|triple double/i],['dd',/double.?double|double double/i],
+ ['pra',/\bpra\b|points.{0,15}rebounds.{0,15}assists|points.{0,15}assists.{0,15}rebounds/i],
+ ['threes',/3.?pointers?|three.?pointers?|3.?pt|3pm|three pointers made/i],
+ ['rebounds',/\brebounds?\b|\bboards\b/i],['assists',/\bassists?\b/i],['points',/\bpoints?\b|\bpts\b/i]
+];
+function typeOf(s){for(const [k,r] of patterns)if(r.test(s))return k;return null}
+function number(v){if(v===null||v===undefined||v==='')return null;let n=Number(v);return Number.isFinite(n)?n:null}
+function cents(v){let n=number(v);if(n===null)return '—';return (n>1?n/100:n).toLocaleString(undefined,{style:'percent',maximumFractionDigits:1})}
+function title(m){return m.title||m.subtitle||m.ticker||'Untitled market'}
+function getPrices(m){
+ const yesAsk=number(m.yes_ask),yesBid=number(m.yes_bid),noAsk=number(m.no_ask),noBid=number(m.no_bid);
+ return {yesAsk,yesBid,noAsk,noBid};
+}
+function score(m){
+ const p=getPrices(m),vol=number(m.volume)||0,oi=number(m.open_interest)||0;
+ let s=45,notes=[];
+ const spread=(p.yesAsk!==null&&p.yesBid!==null)?p.yesAsk-p.yesBid:null;
+ if(vol>=1000||oi>=500){s+=12;notes.push('meaningful reported activity')}
+ else if(vol>=100||oi>=50){s+=6;notes.push('some reported activity')}
+ else notes.push('thin/unknown activity');
+ if(spread!==null){if(spread<=3){s+=12;notes.push('tight YES spread')}else if(spread<=8){s+=5;notes.push('moderate YES spread')}else{ s-=8;notes.push('wide YES spread')}}
+ else notes.push('spread unavailable');
+ if(p.yesAsk!==null&&p.noAsk!==null&&p.yesAsk+p.noAsk>=98&&p.yesAsk+p.noAsk<=102){s+=3;notes.push('prices broadly consistent')}
+ return {score:Math.max(0,Math.min(100,s)),notes};
+}
+function sidePrice(p,side){return side==='yes'?p.yesAsk:p.noAsk}
+function render(){
+ let list=markets.map(m=>({...m,_type:typeOf(title(m)+' '+(m.ticker||'')),_score:score(m)})).filter(m=>m._type);
+ const cat=$('category').value,side=$('side').value;
+ if(cat!=='all')list=list.filter(m=>m._type===cat);
+ if(side!=='all')list=list.filter(m=>sidePrice(getPrices(m),side)!==null);
+ const sort=$('sort').value;
+ list.sort((a,b)=>sort==='volume'?(number(b.volume)||0)-(number(a.volume)||0):sort==='price'?(getPrices(a).yesAsk??9999)-(getPrices(b).yesAsk??9999):b._score.score-a._score.score);
+ $('results').innerHTML=list.length?list.map(m=>{
+  const p=getPrices(m),ticker=m.ticker||'',url=m.url||('https://kalshi.com/markets/'+ticker.toLowerCase());
+  return `<article class="market"><div class="top"><div class="name">${esc(title(m))}</div><span class="tag">${m._type.toUpperCase()}</span></div>
+  <div class="metrics"><div class="metric"><small>YES ask</small><b>${cents(p.yesAsk)}</b></div><div class="metric"><small>NO ask</small><b>${cents(p.noAsk)}</b></div><div class="metric"><small>Volume</small><b>${number(m.volume)?.toLocaleString()??'—'}</b></div><div class="metric"><small>Open interest</small><b>${number(m.open_interest)?.toLocaleString()??'—'}</b></div></div>
+  <div class="score">Market-quality screen: ${m._score.score}/100</div><div class="why">${m._score.notes.join(' · ')}. This is a liquidity/market-data score, NOT a win probability or proven edge.</div>
+  <div class="links"><a href="${escAttr(url)}" target="_blank" rel="noopener">Open contract ↗</a><span>${esc(ticker)}</span></div></article>`
+ }).join(''):'<div class="empty">No matching player-stat markets found in the loaded open-market sample. Try All opportunities or scan again.</div>';
+}
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function escAttr(s){return esc(s)}
+async function scan(){
+ $('status').textContent='Connecting to Kalshi public markets…';
+ $('scan').disabled=true;
+ try{
+  const r=await fetch(endpoint,{headers:{'Accept':'application/json'}});
+  if(!r.ok)throw new Error('Kalshi returned HTTP '+r.status);
+  const data=await r.json();markets=data.markets||[];
+  render();
+  $('status').textContent=`Loaded ${markets.length} open markets. Showing ${$('results').children.length} matching player-stat contracts. Historical player stats and game context are not yet connected.`;
+ }catch(e){
+  $('status').textContent='Could not load Kalshi markets: '+e.message+'. This can happen because the browser blocks cross-origin requests. No prices or picks have been fabricated. A small server-side relay may be needed for the hosted version.';
+ }finally{$('scan').disabled=false}
+}
+$('scan').addEventListener('click',scan);
+['category','side','sort'].forEach(id=>$(id).addEventListener('change',render));
+$('reset').addEventListener('click',()=>{$('category').value='all';$('side').value='all';$('sort').value='score';render()});
+$('date').value=new Date().toISOString().slice(0,10);
+</script>
+</body></html>
